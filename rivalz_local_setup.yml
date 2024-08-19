@@ -1,0 +1,157 @@
+---
+- name: Setup and Run Multiple Node.js Containers with Screen and Rivalz CLI
+  hosts: localhost
+  connection: local
+  become: yes
+  vars:
+    number_of_instances: 6
+
+  tasks:
+    - name: Check if Docker is installed
+      ansible.builtin.command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check if Docker Compose (new version) is installed
+      ansible.builtin.command: docker compose version
+      register: docker_compose_new_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check if Docker Compose (old version) is installed
+      ansible.builtin.command: docker-compose --version
+      register: docker_compose_old_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Install Docker and Docker Compose
+      block:
+        - name: Update apt cache
+          ansible.builtin.apt:
+            update_cache: yes
+
+        - name: Install required packages
+          ansible.builtin.apt:
+            name: 
+              - apt-transport-https
+              - ca-certificates
+              - curl
+              - software-properties-common
+              - python3-pip
+            state: present
+
+        - name: Add Docker GPG apt Key
+          ansible.builtin.apt_key:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            state: present
+
+        - name: Add Docker Repository
+          ansible.builtin.apt_repository:
+            repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+            state: present
+
+        - name: Update apt cache
+          ansible.builtin.apt:
+            update_cache: yes
+
+        - name: Install Docker
+          ansible.builtin.apt:
+            name: 
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+            state: present
+          when: docker_check.rc != 0
+
+        - name: Install Docker Compose plugin
+          ansible.builtin.apt:
+            name: docker-compose-plugin
+            state: present
+          when: docker_compose_new_check.rc != 0 and docker_compose_old_check.rc != 0
+
+      when: docker_check.rc != 0 or (docker_compose_new_check.rc != 0 and docker_compose_old_check.rc != 0)
+
+    - name: Install Docker Python module
+      ansible.builtin.pip:
+        name: docker
+
+    - name: Get list of all containers
+      community.docker.docker_host_info:
+        containers: yes
+      register: docker_info
+
+    - name: Debug - Print all containers
+      ansible.builtin.debug:
+        var: docker_info.containers
+
+    - name: Get RivalzNode container names
+      ansible.builtin.command: docker ps -a --format {% raw %}'{{.Names}}'{% endraw %} | grep rivalzNode
+      register: rivalz_containers
+      changed_when: false
+      failed_when: false
+
+    - name: Debug - Print RivalzNode containers
+      ansible.builtin.debug:
+        var: rivalz_containers.stdout_lines
+
+    - name: Remove existing RivalzNode containers
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+        force_kill: yes
+      loop: "{{ rivalz_containers.stdout_lines }}"
+      when: rivalz_containers.stdout_lines | length > 0
+
+    - name: Run Node.js containers
+      community.docker.docker_container:
+        name: "rivalzNode{{ item }}"
+        image: "node:20.0.0"
+        state: started
+        detach: yes
+        command: tail -f /dev/null
+      loop: "{{ range(number_of_instances) | list }}"
+
+    - name: Install screen and Rivalz CLI in containers
+      ansible.builtin.shell: |
+        docker exec rivalzNode{{ item }} apt-get update
+        docker exec rivalzNode{{ item }} apt-get install -y screen
+        docker exec rivalzNode{{ item }} npm install -g rivalz-node-cli
+      loop: "{{ range(number_of_instances) | list }}"
+
+    - name: Display container info
+      community.docker.docker_container_info:
+        name: "rivalzNode{{ item }}"
+      loop: "{{ range(number_of_instances) | list }}"
+      register: container_info
+
+    - name: Show container info
+      ansible.builtin.debug:
+        var: container_info.results
+
+    - name: Verify Node.js version
+      ansible.builtin.command: docker exec rivalzNode{{ item }} node --version
+      loop: "{{ range(number_of_instances) | list }}"
+      register: node_version
+
+    - name: Show Node.js version
+      ansible.builtin.debug:
+        var: node_version.results
+
+    - name: Verify Rivalz CLI installation
+      ansible.builtin.command: docker exec rivalzNode{{ item }} rivalz --version
+      loop: "{{ range(number_of_instances) | list }}"
+      register: rivalz_version
+
+    - name: Show Rivalz CLI version
+      ansible.builtin.debug:
+        var: rivalz_version.results
+
+    - name: Verify Screen installation
+      ansible.builtin.command: docker exec rivalzNode{{ item }} screen --version
+      loop: "{{ range(number_of_instances) | list }}"
+      register: screen_version
+
+    - name: Show Screen version
+      ansible.builtin.debug:
+        var: screen_version.results
