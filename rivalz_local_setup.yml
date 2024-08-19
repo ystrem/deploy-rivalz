@@ -4,7 +4,8 @@
   connection: local
   become: yes
   vars:
-    number_of_instances: 6
+    number_of_instances: 3
+    venv_path: "/opt/docker_venv"
 
   tasks:
     - name: Check if Docker is installed
@@ -24,6 +25,11 @@
       register: docker_compose_old_check
       ignore_errors: yes
       changed_when: false
+
+    - name: Install Python 3.12 venv package
+      ansible.builtin.apt:
+        name: python3.12-venv
+        state: present
 
     - name: Install Docker and Docker Compose
       block:
@@ -72,9 +78,25 @@
 
       when: docker_check.rc != 0 or (docker_compose_new_check.rc != 0 and docker_compose_old_check.rc != 0)
 
-    - name: Install Docker Python module
-      ansible.builtin.pip:
+    - name: Remove existing virtual environment if incomplete
+      ansible.builtin.file:
+        path: "{{ venv_path }}"
+        state: absent
+      when: venv_path not in ansible_facts['python']['executable']
+
+    - name: Create a virtual environment for Docker Python module
+      ansible.builtin.command: python3 -m venv {{ venv_path }}
+      args:
+        creates: "{{ venv_path }}"
+
+    - name: Install Docker Python module in virtual environment
+      ansible.builtin.command: "{{ venv_path }}/bin/pip install docker"
+
+    - name: Ensure Docker service is enabled and started
+      ansible.builtin.systemd:
         name: docker
+        enabled: yes
+        state: started
 
     - name: Get list of all containers
       community.docker.docker_host_info:
@@ -103,13 +125,22 @@
       loop: "{{ rivalz_containers.stdout_lines }}"
       when: rivalz_containers.stdout_lines | length > 0
 
+    - name: Create startup script for Rivalz
+      ansible.builtin.copy:
+        dest: /usr/local/bin/start-rivalz.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          rivalz run
+
     - name: Run Node.js containers
       community.docker.docker_container:
         name: "rivalzNode{{ item }}"
         image: "node:20.0.0"
         state: started
+        restart_policy: always
         detach: yes
-        command: tail -f /dev/null
+        command: ["/bin/bash", "-c", "while true; do /usr/local/bin/start-rivalz.sh; sleep 10; done"]
       loop: "{{ range(number_of_instances) | list }}"
 
     - name: Install screen and Rivalz CLI in containers
@@ -117,6 +148,10 @@
         docker exec rivalzNode{{ item }} apt-get update
         docker exec rivalzNode{{ item }} apt-get install -y screen
         docker exec rivalzNode{{ item }} npm install -g rivalz-node-cli
+      loop: "{{ range(number_of_instances) | list }}"
+
+    - name: Copy startup script to containers
+      ansible.builtin.command: docker cp /usr/local/bin/start-rivalz.sh rivalzNode{{ item }}:/usr/local/bin/start-rivalz.sh
       loop: "{{ range(number_of_instances) | list }}"
 
     - name: Display container info
