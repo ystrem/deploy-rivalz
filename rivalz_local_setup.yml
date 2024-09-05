@@ -1,10 +1,9 @@
----
-- name: Setup and Run Multiple Node.js Containers with Screen and Rivalz CLI
+- name: Setup and Run Multiple Node.js Containers with Rivalz CLI
   hosts: localhost
   connection: local
   become: yes
   vars:
-    number_of_instances: 15
+    number_of_instances: 10
 
   tasks:
     - name: Check if Docker is installed
@@ -86,7 +85,7 @@
         var: docker_info.containers
 
     - name: Get RivalzNode container names
-      ansible.builtin.command: docker ps -a --format {% raw %}'{{.Names}}'{% endraw %} | grep rivalzNode
+      ansible.builtin.command: docker ps -a --format '{{"{{"}}.Names{{"}}"}}' | grep rivalzNode
       register: rivalz_containers
       changed_when: false
       failed_when: false
@@ -108,15 +107,35 @@
         name: "rivalzNode{{ item }}"
         image: "node:20.0.0"
         state: started
+        restart_policy: always
         detach: yes
-        command: tail -f /dev/null
+        command: ["tail", "-f", "/dev/null"]
       loop: "{{ range(number_of_instances) | list }}"
 
-    - name: Install screen and Rivalz CLI in containers
+    - name: Install Rivalz CLI and htop in containers
       ansible.builtin.shell: |
         docker exec rivalzNode{{ item }} apt-get update
-        docker exec rivalzNode{{ item }} apt-get install -y screen
+        docker exec rivalzNode{{ item }} apt-get install -y curl htop screen
+        docker exec rivalzNode{{ item }} curl -sL https://deb.nodesource.com/setup_20.x | bash -
+        docker exec rivalzNode{{ item }} apt-get install -y nodejs
         docker exec rivalzNode{{ item }} npm install -g rivalz-node-cli
+      loop: "{{ range(number_of_instances) | list }}"
+
+    - name: Create startup script in containers
+      ansible.builtin.shell: |
+        docker exec rivalzNode{{ item }} bash -c 'echo "#!/bin/bash" > /usr/local/bin/startup.sh'
+        docker exec rivalzNode{{ item }} bash -c 'echo "rivalz run" >> /usr/local/bin/startup.sh'
+        docker exec rivalzNode{{ item }} chmod +x /usr/local/bin/startup.sh
+      loop: "{{ range(number_of_instances) | list }}"
+
+    - name: Update Dockerfile command to run startup script
+      community.docker.docker_container:
+        name: "rivalzNode{{ item }}"
+        image: "node:20.0.0"
+        state: started
+        restart_policy: always
+        detach: yes
+        command: ["tail", "-f", "/dev/null"]
       loop: "{{ range(number_of_instances) | list }}"
 
     - name: Display container info
@@ -147,11 +166,11 @@
       ansible.builtin.debug:
         var: rivalz_version.results
 
-    - name: Verify Screen installation
-      ansible.builtin.command: docker exec rivalzNode{{ item }} screen --version
+    - name: Verify htop installation
+      ansible.builtin.command: docker exec rivalzNode{{ item }} htop --version
       loop: "{{ range(number_of_instances) | list }}"
-      register: screen_version
+      register: htop_version
 
-    - name: Show Screen version
+    - name: Show htop version
       ansible.builtin.debug:
-        var: screen_version.results
+        var: htop_version.results
