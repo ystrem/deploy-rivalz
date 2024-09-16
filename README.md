@@ -1,5 +1,5 @@
 ##Install - 
-ansible-playbook rivalz_local_setup.yml -vv
+ansible-playbook rivalz_local_setup.yml -vv or ansible-playbook rivalz_local_setup.yml --ask-become-pass
 
 ##Run once and setup node - 
 docker exec -it rivalzNode0 /bin/bash -c "rivalz run"
