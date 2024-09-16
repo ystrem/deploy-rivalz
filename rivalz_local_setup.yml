@@ -1,3 +1,4 @@
+# Ansible Playbook to Setup and Run Multiple Node.js Containers with Rivalz CLI
 - name: Setup and Run Multiple Node.js Containers with Rivalz CLI
   hosts: localhost
   connection: local
@@ -32,7 +33,7 @@
 
         - name: Install required packages
           ansible.builtin.apt:
-            name: 
+            name:
               - apt-transport-https
               - ca-certificates
               - curl
@@ -56,7 +57,7 @@
 
         - name: Install Docker
           ansible.builtin.apt:
-            name: 
+            name:
               - docker-ce
               - docker-ce-cli
               - containerd.io
@@ -72,8 +73,9 @@
       when: docker_check.rc != 0 or (docker_compose_new_check.rc != 0 and docker_compose_old_check.rc != 0)
 
     - name: Install Docker Python module
-      ansible.builtin.pip:
-        name: docker
+      ansible.builtin.apt:
+        name: python3-docker
+        state: present
 
     - name: Get list of all containers
       community.docker.docker_host_info:
@@ -128,14 +130,14 @@
         docker exec rivalzNode{{ item }} chmod +x /usr/local/bin/startup.sh
       loop: "{{ range(number_of_instances) | list }}"
 
-    - name: Update Dockerfile command to run startup script
+    - name: Update Docker container command to run startup script
       community.docker.docker_container:
         name: "rivalzNode{{ item }}"
         image: "node:20.0.0"
         state: started
         restart_policy: always
         detach: yes
-        command: ["tail", "-f", "/dev/null"]
+        command: ["/usr/local/bin/startup.sh"]
       loop: "{{ range(number_of_instances) | list }}"
 
     - name: Display container info
